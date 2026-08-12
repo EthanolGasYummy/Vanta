@@ -55,6 +55,7 @@ local SCHEMA = {
     {t="toggle",id="aim_pred",label="Prediction"},
     {t="slider",id="aim_predamt",label="Prediction Strength",min=0,max=40,default=14},
     {t="toggle",id="aim_sticky",label="Sticky Target",default=true},
+    {t="toggle",id="aim_team",label="Team Check",default=true},
     {t="toggle",id="aim_highlight",label="Highlight Target",default=true},
     {t="toggle",id="aim_fovcircle",label="Show FOV Circle",default=true},
     {t="color",id="c_fov",label="FOV Color"},
@@ -67,9 +68,11 @@ local SCHEMA = {
   }},
   {name="Triggerbot", col=3, items={
     {t="toggle",id="trig_on",label="Enable Triggerbot"},
-    {t="bind",id="trig_key",label="Trigger Key",default=0x06},
-    {t="slider",id="trig_fov",label="Trigger FOV",min=2,max=40,default=12,suf="px"},
+    {t="bind",id="trig_key",label="Trigger Key (blank=always)",default=0},
+    {t="slider",id="trig_fov",label="Trigger FOV",min=2,max=60,default=18,suf="px"},
     {t="slider",id="trig_delay",label="Delay",min=0,max=300,default=40,suf="ms"},
+    {t="toggle",id="trig_visible",label="Visible Only",default=true},
+    {t="toggle",id="trig_team",label="Team Check",default=true},
   }},
 }},
 {name="ESP", groups={
@@ -81,6 +84,7 @@ local SCHEMA = {
     {t="toggle",id="esp_dist",label="Distance",default=true},
     {t="toggle",id="esp_hp",label="Health Bar",default=true},
     {t="toggle",id="esp_weapon",label="Weapon",default=true},
+    {t="toggle",id="esp_team",label="Show Teammates",default=false},
   }},
   {name="Extras", col=2, items={
     {t="toggle",id="esp_skel",label="Skeleton"},
@@ -153,6 +157,18 @@ local SCHEMA = {
     {t="toggle",id="rage_always",label="Always On (no key)"},
     {t="slider",id="rage_fov",label="FOV",min=50,max=900,default=450,suf="px"},
   }},
+  {name="Silent Aim", col=2, items={
+    {t="toggle",id="silent_on",label="Silent Aim"},
+    {t="bind",id="silent_key",label="Silent Key",default=0x02},
+    {t="toggle",id="silent_always",label="Always On (no key)"},
+    {t="combo",id="silent_bone",label="Bone",items={"Head","Chest","Pelvis"},default=1},
+    {t="slider",id="silent_fov",label="FOV",min=20,max=900,default=220,suf="px"},
+    {t="toggle",id="silent_team",label="Team Check",default=true},
+    {t="toggle",id="silent_vis",label="Show FOV + Target",default=true},
+    {t="color",id="c_silent",label="Silent Color"},
+    {t="note",label="Redirects hit-reg via the silent"},
+    {t="note",label="hook. Experimental - test it."},
+  }},
 }},
 {name="Config", groups={
   {name="Profile", col=1, items={
@@ -177,7 +193,8 @@ local SCHEMA = {
 
 local DEF_COL={ c_fov={0.45,0.78,1,1}, c_enemy={0.95,0.35,0.4,1},
   c_name={1,1,1,1}, c_tracer={0.95,0.35,0.4,1}, c_bomb={1,0.8,0.2,1},
-  c_claymore={1,0.35,0.35,1}, c_alarm={0.6,1,0.5,1}, c_xh={1,1,1,1}, c_accent={0.20,0.86,1.0,1} }
+  c_claymore={1,0.35,0.35,1}, c_alarm={0.6,1,0.5,1}, c_xh={1,1,1,1}, c_accent={0.20,0.86,1.0,1},
+  c_silent={0.6,1.0,0.55,1} }
 
 for _,tab in ipairs(SCHEMA) do for _,g in ipairs(tab.groups) do for _,it in ipairs(g.items) do
   if it.t=="toggle" then cfg[it.id]=it.default or false
@@ -395,13 +412,11 @@ local vm_players={}
 local vm_seen={}
 local char_models={}
 local char_last=-1
-local MATCH_R2=400      -- 20 studs: viewmodel head -> character HumanoidRootPart
-local MAXD2=250000      -- 500 studs render cap
-local HIDE2=9           -- 3 studs = your own body
+local MATCH_R2=400
+local MAXD2=250000
+local HIDE2=9
 local GRACE=0.4
 
--- players have a real character Model in Workspace (Humanoid + HumanoidRootPart);
--- match viewmodels to those (reliable positions) instead of entity positions.
 local function refresh_char_models()
   char_models={}
   local ws=game.Workspace; if not ws then return end
@@ -467,7 +482,10 @@ local function scan_vm()
                 end
               end
               if rec and rec.t and (tnow-rec.t)<=GRACE then
-                vm_players[#vm_players+1]={bones=bones,aabb={mnx,mny,mnz,mxx,mxy,mxz},hp=rec.hp or 100,mhp=rec.mhp or 100,name=rec.name,ent=rec.ent,tool=rec.tool}
+
+                local friend=false
+                pcall(function() friend=(head:FindFirstChild("Username") or vm:FindFirstChild("TeammateHighlight") or head:FindFirstChild("TeammateHighlight")) and true or false end)
+                vm_players[#vm_players+1]={bones=bones,aabb={mnx,mny,mnz,mxx,mxy,mxz},hp=rec.hp or 100,mhp=rec.mhp or 100,name=rec.name,ent=rec.ent,tool=rec.tool,friend=friend}
               end
             end
           end
@@ -501,6 +519,7 @@ local function run_aimbot()
   if not ekey(bind.aim_key or 0x02) then aim_lock=nil; return end
   local bone=AIM_BONE[cfg.aim_bone] or "head"
   local function cand_for(p)
+    if cfg.aim_team and p.friend then return nil end
     if cfg.aim_bone==4 then
       local c,md=nil,1e9
       for _,bn in ipairs({"head","torso","hip1"}) do local b=p.bones[bn]
@@ -558,15 +577,42 @@ local function run_aimbot()
   end
 end
 
+local function shoot_origin()
+  local o; local lp=entity.GetLocalPlayer()
+  if lp then pcall(function() o=lp.HeadPosition end) end
+  if not o then pcall(function() o=camera.GetPosition() end) end
+  return o
+end
+local function bone_visible(origin, b)
+  if not origin or not b then return true end
+  local ok=true
+  pcall(function() ok=raycast.IsVisible(origin, Vector3.New(b.x,b.y,b.z)) end)
+  return ok==true
+end
+
 local trig_last=0
 local function run_trigger()
   if not cfg.trig_on then return end
-  if not ekey(bind.trig_key or 0x06) then return end
-  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5; local hit=false
+  local key = bind.trig_key or 0
+  if key~=0 and not ekey(key) then return end
+  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5
+  local origin = cfg.trig_visible and shoot_origin() or nil
+  local hit=false
   for _,p in ipairs(vm_players) do
-    local b=p.bones.torso or p.bones.head
-    if b then local sx,sy,v=W2S(b.x,b.y,b.z)
-      if v and math.sqrt((sx-cx)^2+(sy-cy)^2)<=cfg.trig_fov then hit=true; break end
+    if not (cfg.trig_team and p.friend) then
+
+    local on=false
+    local mnx,mny,mxx,mxy=box2d(p.aabb)
+    if mnx and cx>=mnx and cx<=mxx and cy>=mny and cy<=mxy then on=true end
+    if not on then
+      local b=p.bones.torso or p.bones.head
+      if b then local sx,sy,v=W2S(b.x,b.y,b.z)
+        if v and math.sqrt((sx-cx)^2+(sy-cy)^2)<=cfg.trig_fov then on=true end end
+    end
+    if on then
+      if not cfg.trig_visible then hit=true; break
+      elseif bone_visible(origin, p.bones.head or p.bones.torso) then hit=true; break end
+    end
     end
   end
   if hit then local t=now(); if t-trig_last>=cfg.trig_delay/1000 then trig_last=t; pcall(utility.MouseClick) end end
@@ -579,14 +625,13 @@ local function run_recoil()
   pcall(input.MoveMouse, 0, pull)
 end
 
-
 local function run_esp()
   if not cfg.esp_on then return end
   local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5; local tsz=cfg.esp_textsize
   for _,p in ipairs(vm_players) do
     local head=p.bones.head
     local dist=head and cam_dist(head.x,head.y,head.z) or 0
-    if cfg.esp_maxdist>=3000 or dist<=cfg.esp_maxdist then
+    if (cfg.esp_maxdist>=3000 or dist<=cfg.esp_maxdist) and (cfg.esp_team or not p.friend) then
       local base=col.c_enemy
       if cfg.esp_chroma then base=chroma() end
       local mnx,mny,mxx,mxy=box2d(p.aabb)
@@ -757,6 +802,71 @@ local function run_rage()
   if best then pcall(input.MoveMouse, best.sx-cx, best.sy-cy) end
 end
 
+local SILENT_BONE={"head","torso","hip1"}
+local silent_hook=false
+local silent_track=nil
+local SILENT_VK=0x01
+
+local function silent_send(origin, dir)
+  if silent_track==nil then silent_track = type(raycast.TrackSilentTarget)=="function" end
+  if silent_track then
+    return (pcall(function() raycast.TrackSilentTarget(origin, dir, SILENT_VK) end))
+  end
+  return (pcall(function() raycast.SetSilentTarget(origin, dir) end))
+end
+
+local function silent_enable()
+  local active=false
+  pcall(function() if raycast.IsSilentHookActive then active=raycast.IsSilentHookActive()==true end end)
+  if active then silent_hook=true; return true end
+  local ok=false; pcall(function() ok=raycast.EnableSilentHook() end)
+  silent_hook = ok==true
+  return silent_hook
+end
+local function run_silent()
+  if not cfg.silent_on then
+    if silent_hook then pcall(raycast.ClearSilentTarget); pcall(raycast.DisableSilentHook); silent_hook=false end
+    return
+  end
+  if not silent_hook and not silent_enable() then return end
+  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5
+
+  if cfg.silent_vis then draw.Circle(cx,cy,cfg.silent_fov,a(col.c_silent,0.45),64,1) end
+  if not cfg.silent_always and not ekey(bind.silent_key or 0x02) then
+    pcall(raycast.ClearSilentTarget); return
+  end
+  local origin = shoot_origin()
+  if not origin then pcall(raycast.ClearSilentTarget); return end
+  local bone=SILENT_BONE[cfg.silent_bone] or "head"
+  local best,bd,bestv,bsx,bsy=nil,cfg.silent_fov,nil,nil,nil
+  for _,p in ipairs(vm_players) do
+    local b=(not (cfg.silent_team and p.friend)) and (p.bones[bone] or p.bones.head or p.bones.torso) or nil
+    if b then
+      local sx,sy,v=W2S(b.x,b.y,b.z)
+      if v then
+        local d=math.sqrt((sx-cx)^2+(sy-cy)^2)
+        if d<bd then
+          bd=d; best=p; bestv=Vector3.New(b.x,b.y,b.z); bsx=sx; bsy=sy
+        end
+      end
+    end
+  end
+  if not (best and bestv) then pcall(raycast.ClearSilentTarget); return end
+  local ok,dir=pcall(function() return bestv-origin end)
+  if not ok or not dir then pcall(raycast.ClearSilentTarget); return end
+
+  local mag; pcall(function() mag=dir.Magnitude end)
+  if not mag or mag<0.05 then pcall(raycast.ClearSilentTarget); return end
+  if not silent_send(origin, dir) then pcall(raycast.ClearSilentTarget); return end
+
+  if cfg.silent_vis and bsx then
+    local hc=a(col.c_silent,1)
+    draw.Circle(bsx,bsy,9,hc,20,1.5)
+    draw.Line(bsx-13,bsy,bsx-7,bsy,hc,1.5); draw.Line(bsx+7,bsy,bsx+13,bsy,hc,1.5)
+    draw.Line(bsx,bsy-13,bsx,bsy-7,hc,1.5); draw.Line(bsx,bsy+7,bsx,bsy+13,hc,1.5)
+  end
+end
+
 local function serialize()
   local parts={}
   for k,v in pairs(cfg) do parts[#parts+1]="v:"..k.."="..(type(v)=="boolean" and (v and "1" or "0") or tostring(v)) end
@@ -788,6 +898,7 @@ for _,tab in ipairs(SCHEMA) do for _,g in ipairs(tab.groups) do for _,it in ipai
   elseif it.id=="cfg_reset" then it._cb=cfg_reset
   elseif it.id=="unload" then it._cb=function() unloaded=true
     pcall(function() if vis_b then lighting.SetBrightness(vis_b) end end)
+    pcall(raycast.ClearSilentTarget); pcall(raycast.DisableSilentHook)
     pcall(function() notify.Success("VANTA","Unloaded",2) end) end
   end
 end end end
@@ -803,6 +914,7 @@ function OnFrame()
   pcall(run_trigger)
   pcall(run_recoil)
   pcall(run_rage)
+  pcall(run_silent)
   pcall(run_esp)
   pcall(run_obj_esp)
   pcall(run_visuals)

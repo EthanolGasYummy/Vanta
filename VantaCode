@@ -112,6 +112,7 @@ local SCHEMA = {
     {t="toggle",id="obj_cam",label="Cameras & Drones",default=true},
     {t="toggle",id="obj_nade",label="Grenades",default=false},
     {t="toggle",id="obj_util",label="Utility / Shields",default=true},
+    {t="toggle",id="obj_chams",label="Chams",default=false},
     {t="toggle",id="obj_names",label="Show Names",default=true},
     {t="toggle",id="obj_dist",label="Show Distance",default=true},
     {t="slider",id="obj_maxdist",label="Max Distance",min=0,max=3000,default=3000},
@@ -712,14 +713,61 @@ local GADGETS={
   DeployableShield={"SHIELD","obj_util","c_util"}, MetalBarricade={"BARRICADE","obj_util","c_util"},
   SignalDisruptor={"JAMMER","obj_util","c_util"},
 }
+local function model_parts(m)
+  local out={}
+  for _,c in ipairs(call(function() return m:GetDescendants() end) or {}) do
+    if PARTCLS[c.ClassName] then out[#out+1]=c; if #out>=40 then break end end
+  end
+  return out
+end
 local function scan_obj()
   obj_cache={}; local ws=game.Workspace
   for _,m in ipairs(call(function() return ws:GetChildren() end) or {}) do
     if m.ClassName=="Model" then
       local g=GADGETS[m.Name]
-      if g and cfg[g[2]] then local prt=find_part(m,3); if prt then obj_cache[#obj_cache+1]={part=prt,label=g[1],ck=g[3]} end end
+      if g and cfg[g[2]] then local parts=model_parts(m); local prt=parts[1] or find_part(m,3)
+        if prt then obj_cache[#obj_cache+1]={part=prt,parts=parts,label=g[1],ck=g[3]} end
+      end
     end
   end
+end
+local function hull2d(pts)
+  if #pts<3 then return pts end
+  table.sort(pts,function(a,b) if a[1]==b[1] then return a[2]<b[2] end return a[1]<b[1] end)
+  local function cr(o,a,b) return (a[1]-o[1])*(b[2]-o[2])-(a[2]-o[2])*(b[1]-o[1]) end
+  local lo={}
+  for _,p in ipairs(pts) do while #lo>=2 and cr(lo[#lo-1],lo[#lo],p)<=0 do lo[#lo]=nil end lo[#lo+1]=p end
+  local up={}
+  for i=#pts,1,-1 do local p=pts[i]; while #up>=2 and cr(up[#up-1],up[#up],p)<=0 do up[#up]=nil end up[#up+1]=p end
+  lo[#lo]=nil; up[#up]=nil
+  for _,p in ipairs(up) do lo[#lo+1]=p end
+  return lo
+end
+local function part_corners(prt)
+  local pos=prt.Position; local sz=prt.Size; if not pos or not sz then return nil end
+  local hx,hy,hz=sz.X*0.5,sz.Y*0.5,sz.Z*0.5
+  local rv,uv,lv=prt.RightVector,prt.UpVector,prt.LookVector
+  local S={{-1,-1,-1},{1,-1,-1},{-1,1,-1},{1,1,-1},{-1,-1,1},{1,-1,1},{-1,1,1},{1,1,1}}
+  local C={}
+  if rv and uv and lv and rv.X then
+    for _,s in ipairs(S) do
+      C[#C+1]={pos.X+rv.X*s[1]*hx+uv.X*s[2]*hy+lv.X*s[3]*hz,
+               pos.Y+rv.Y*s[1]*hx+uv.Y*s[2]*hy+lv.Y*s[3]*hz,
+               pos.Z+rv.Z*s[1]*hx+uv.Z*s[2]*hy+lv.Z*s[3]*hz}
+    end
+  else
+    for _,s in ipairs(S) do C[#C+1]={pos.X+s[1]*hx,pos.Y+s[2]*hy,pos.Z+s[3]*hz} end
+  end
+  return C
+end
+local function cham_part(prt,fill,oc)
+  local C=part_corners(prt); if not C then return end
+  local sp={}
+  for _,c in ipairs(C) do local sx,sy,v=W2S(c[1],c[2],c[3]); if v then sp[#sp+1]={sx,sy} end end
+  if #sp<3 then return end
+  local h=hull2d(sp)
+  if draw.PolyFilled then pcall(draw.PolyFilled,h,fill) end
+  for i=1,#h do local p1=h[i]; local p2=h[i%#h+1]; draw.Line(p1[1],p1[2],p2[1],p2[2],oc,1.2) end
 end
 local function run_obj_esp()
   if not cfg.obj_on then return end
@@ -727,8 +775,12 @@ local function run_obj_esp()
   for _,o in ipairs(obj_cache) do
     if utility.IsValid(o.part) then local pos=o.part.Position
       if pos then local dist=cam_dist(pos.X,pos.Y,pos.Z)
-        if cfg.obj_maxdist>=3000 or dist<=cfg.obj_maxdist then local sx,sy,v=W2S(pos.X,pos.Y,pos.Z)
-          if v then local c=a(col[o.ck],1); draw.CircleFilled(sx,sy,3,c,10)
+        if cfg.obj_maxdist>=3000 or dist<=cfg.obj_maxdist then local c=a(col[o.ck],1)
+          if cfg.obj_chams and o.parts then local fill={col[o.ck][1],col[o.ck][2],col[o.ck][3],0.5}
+            for _,pr in ipairs(o.parts) do if utility.IsValid(pr) then pcall(cham_part,pr,fill,c) end end
+          end
+          local sx,sy,v=W2S(pos.X,pos.Y,pos.Z)
+          if v then draw.CircleFilled(sx,sy,3,c,10)
             if cfg.obj_names then local tw=ts(o.label,12); draw.Text(sx-tw*0.5,sy-14,o.label,c,12) end
             if cfg.obj_dist then local dl=string.format("%.0fm",dist); local tw=ts(dl,11); draw.Text(sx-tw*0.5,sy+4,dl,{1,1,1,1},11) end
           end

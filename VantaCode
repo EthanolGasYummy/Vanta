@@ -26,7 +26,10 @@ local function approach(k,target,spd) local v=anim[k]; if v==nil then v=target e
 
 local function call(fn,...) if type(fn)~="function" then return nil end local ok,r=pcall(fn,...) if ok then return r end return nil end
 local function scr() local w,h=draw.GetScreenSize(); return w or 1920, h or 1080 end
-local function mouse_pos() local x,y=utility.GetMousePos(); return x or 0, y or 0 end
+local function mouse_pos()
+  if input and input.GetMousePosition then local x,y=input.GetMousePosition(); if x then return x,y end end
+  local x,y=utility.GetMousePos(); return x or 0, y or 0
+end
 local function now() return utility.GetTime and utility.GetTime() or os.clock() end
 local function W2S(x,y,z) local sx,sy,v=draw.WorldToScreen(x,y,z); return sx,sy,v end
 local function ekey(vk) return input.IsKeyDown(vk)==true end

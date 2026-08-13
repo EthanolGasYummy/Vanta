@@ -166,8 +166,6 @@ local SCHEMA = {
     {t="toggle",id="silent_team",label="Team Check",default=true},
     {t="toggle",id="silent_vis",label="Show FOV + Target",default=true},
     {t="color",id="c_silent",label="Silent Color"},
-    {t="note",label="Redirects hit-reg via the silent"},
-    {t="note",label="hook. Experimental - test it."},
   }},
 }},
 {name="Config", groups={
@@ -807,25 +805,41 @@ local silent_hook=false
 local silent_track=nil
 local SILENT_VK=0x01
 
+local function rfn(pascal,snake) return raycast[pascal] or raycast[snake] end
+local R_enable  = rfn("EnableSilentHook","enable_silent_hook")
+local R_active  = rfn("IsSilentHookActive","is_silent_hook_active")
+local R_set     = rfn("SetSilentTarget","set_silent_target")
+local R_track   = rfn("TrackSilentTarget","track_silent_target")
+local R_clear   = rfn("ClearSilentTarget","clear_silent_target")
+local R_stop    = rfn("StopSilentTracking","stop_silent_tracking")
+local R_disable = rfn("DisableSilentHook","disable_silent_hook")
+
+-- release the hook so normal shots pass through: stop tracking THEN clear the target
+local function silent_release()
+  if R_stop then pcall(R_stop) end
+  if R_clear then pcall(R_clear) end
+end
+
 local function silent_send(origin, dir)
-  if silent_track==nil then silent_track = type(raycast.TrackSilentTarget)=="function" end
+  if silent_track==nil then silent_track = type(R_track)=="function" end
   if silent_track then
-    return (pcall(function() raycast.TrackSilentTarget(origin, dir, SILENT_VK) end))
+    return (pcall(function() R_track(origin, dir, SILENT_VK) end))
   end
-  return (pcall(function() raycast.SetSilentTarget(origin, dir) end))
+  if R_set then return (pcall(function() R_set(origin, dir) end)) end
+  return false
 end
 
 local function silent_enable()
   local active=false
-  pcall(function() if raycast.IsSilentHookActive then active=raycast.IsSilentHookActive()==true end end)
+  pcall(function() if R_active then active=R_active()==true end end)
   if active then silent_hook=true; return true end
-  local ok=false; pcall(function() ok=raycast.EnableSilentHook() end)
+  local ok=false; pcall(function() if R_enable then ok=R_enable() end end)
   silent_hook = ok==true
   return silent_hook
 end
 local function run_silent()
   if not cfg.silent_on then
-    if silent_hook then pcall(raycast.ClearSilentTarget); pcall(raycast.DisableSilentHook); silent_hook=false end
+    if silent_hook then silent_release(); if R_disable then pcall(R_disable) end; silent_hook=false end
     return
   end
   if not silent_hook and not silent_enable() then return end
@@ -833,10 +847,10 @@ local function run_silent()
 
   if cfg.silent_vis then draw.Circle(cx,cy,cfg.silent_fov,a(col.c_silent,0.45),64,1) end
   if not cfg.silent_always and not ekey(bind.silent_key or 0x02) then
-    pcall(raycast.ClearSilentTarget); return
+    silent_release(); return
   end
   local origin = shoot_origin()
-  if not origin then pcall(raycast.ClearSilentTarget); return end
+  if not origin then silent_release(); return end
   local bone=SILENT_BONE[cfg.silent_bone] or "head"
   local best,bd,bestv,bsx,bsy=nil,cfg.silent_fov,nil,nil,nil
   for _,p in ipairs(vm_players) do
@@ -851,13 +865,13 @@ local function run_silent()
       end
     end
   end
-  if not (best and bestv) then pcall(raycast.ClearSilentTarget); return end
+  if not (best and bestv) then silent_release(); return end
   local ok,dir=pcall(function() return bestv-origin end)
-  if not ok or not dir then pcall(raycast.ClearSilentTarget); return end
+  if not ok or not dir then silent_release(); return end
 
   local mag; pcall(function() mag=dir.Magnitude end)
-  if not mag or mag<0.05 then pcall(raycast.ClearSilentTarget); return end
-  if not silent_send(origin, dir) then pcall(raycast.ClearSilentTarget); return end
+  if not mag or mag<0.05 then silent_release(); return end
+  if not silent_send(origin, dir) then silent_release(); return end
 
   if cfg.silent_vis and bsx then
     local hc=a(col.c_silent,1)
@@ -898,7 +912,7 @@ for _,tab in ipairs(SCHEMA) do for _,g in ipairs(tab.groups) do for _,it in ipai
   elseif it.id=="cfg_reset" then it._cb=cfg_reset
   elseif it.id=="unload" then it._cb=function() unloaded=true
     pcall(function() if vis_b then lighting.SetBrightness(vis_b) end end)
-    pcall(raycast.ClearSilentTarget); pcall(raycast.DisableSilentHook)
+    silent_release(); if R_disable then pcall(R_disable) end
     pcall(function() notify.Success("VANTA","Unloaded",2) end) end
   end
 end end end

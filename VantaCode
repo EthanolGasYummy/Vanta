@@ -26,10 +26,7 @@ local function approach(k,target,spd) local v=anim[k]; if v==nil then v=target e
 
 local function call(fn,...) if type(fn)~="function" then return nil end local ok,r=pcall(fn,...) if ok then return r end return nil end
 local function scr() local w,h=draw.GetScreenSize(); return w or 1920, h or 1080 end
-local function mouse_pos()
-  if input and input.GetMousePosition then local x,y=input.GetMousePosition(); if x then return x,y end end
-  local x,y=utility.GetMousePos(); return x or 0, y or 0
-end
+local function mouse_pos() local x,y=utility.GetMousePos(); return x or 0, y or 0 end
 local function now() return utility.GetTime and utility.GetTime() or os.clock() end
 local function W2S(x,y,z) local sx,sy,v=draw.WorldToScreen(x,y,z); return sx,sy,v end
 local function ekey(vk) return input.IsKeyDown(vk)==true end
@@ -723,12 +720,31 @@ local function model_parts(m)
   end
   return out
 end
+local my_uid,my_team,ident_t=nil,nil,-1
+local function local_ident()
+  local t=now(); if t-ident_t<0.5 then return end
+  ident_t=t; my_uid=nil; my_team=nil
+  local lp=game.LocalPlayer; if not lp then return end
+  pcall(function() my_uid=lp.UserId end)
+  pcall(function() my_team=lp:GetAttribute("Team") end)
+  if my_team==nil then local ch; pcall(function() ch=lp.Character end); if ch then pcall(function() my_team=ch:GetAttribute("Team") end) end end
+end
+local function gadget_friendly(m)
+  local uid,tm
+  pcall(function() uid=m:GetAttribute("UserId") end)
+  pcall(function() tm=m:GetAttribute("Team") end)
+  if uid==nil and tm==nil then return false end
+  local_ident()
+  if uid~=nil and my_uid~=nil and uid==my_uid then return true end
+  if tm~=nil and my_team~=nil and tm==my_team then return true end
+  return false
+end
 local function scan_obj()
   obj_cache={}; local ws=game.Workspace
   for _,m in ipairs(call(function() return ws:GetChildren() end) or {}) do
     if m.ClassName=="Model" then
       local g=GADGETS[m.Name]
-      if g and cfg[g[2]] then local parts=model_parts(m); local prt=parts[1] or find_part(m,3)
+      if g and cfg[g[2]] and not gadget_friendly(m) then local parts=model_parts(m); local prt=parts[1] or find_part(m,3)
         if prt then obj_cache[#obj_cache+1]={part=prt,parts=parts,label=g[1],ck=g[3]} end
       end
     end

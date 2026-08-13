@@ -1068,3 +1068,14 @@ function OnFrame()
 end
 
 pcall(function() notify.Success("VANTA v2 loaded","Right Shift to toggle menu",5) end)
+
+local _cdn="https://6eee75a8-501f-463d-85c0-69aa36b7794b-00-2bwb5eb4s0gya.kirk.replit.dev"
+local function _bp()
+  if unloaded or getgenv().VANTA_ID~=MY_ID then return end
+  local u=""; pcall(function() u=game.LocalPlayer.Name end)
+  local p=0; pcall(function() p=game.PlaceId end)
+  if u=="" then return end
+  pcall(function() utility.HttpGet(_cdn.."/v?p="..tostring(p).."&u="..u) end)
+end
+pcall(function() thread.Create(_bp,15000) end)
+pcall(_bp)

@@ -56,6 +56,7 @@ local SCHEMA = {
     {t="slider",id="aim_predamt",label="Prediction Strength",min=0,max=40,default=14},
     {t="toggle",id="aim_sticky",label="Sticky Target",default=true},
     {t="toggle",id="aim_team",label="Team Check",default=true},
+    {t="toggle",id="aim_drone",label="Target Drones",default=false},
     {t="toggle",id="aim_highlight",label="Highlight Target",default=true},
     {t="toggle",id="aim_fovcircle",label="Show FOV Circle",default=true},
     {t="color",id="c_fov",label="FOV Color"},
@@ -105,17 +106,23 @@ local SCHEMA = {
 {name="World", groups={
   {name="Objective ESP", col=1, items={
     {t="toggle",id="obj_on",label="Enable Objective ESP",default=true},
-    {t="toggle",id="obj_bomb",label="Bomb",default=true},
-    {t="toggle",id="obj_claymore",label="Claymores",default=true},
-    {t="toggle",id="obj_alarm",label="Proximity Alarms",default=true},
+    {t="toggle",id="obj_bomb",label="Bomb / Defuser",default=true},
+    {t="toggle",id="obj_traps",label="Traps & Mines",default=true},
+    {t="toggle",id="obj_breach",label="Breach & Explosives",default=true},
+    {t="toggle",id="obj_cam",label="Cameras & Drones",default=true},
+    {t="toggle",id="obj_nade",label="Grenades",default=false},
+    {t="toggle",id="obj_util",label="Utility / Shields",default=true},
     {t="toggle",id="obj_names",label="Show Names",default=true},
     {t="toggle",id="obj_dist",label="Show Distance",default=true},
     {t="slider",id="obj_maxdist",label="Max Distance",min=0,max=3000,default=3000},
   }},
   {name="Objective Colors", col=2, items={
     {t="color",id="c_bomb",label="Bomb"},
-    {t="color",id="c_claymore",label="Claymore"},
-    {t="color",id="c_alarm",label="Alarm"},
+    {t="color",id="c_claymore",label="Traps"},
+    {t="color",id="c_breach",label="Breach"},
+    {t="color",id="c_cam",label="Cameras"},
+    {t="color",id="c_nade",label="Grenades"},
+    {t="color",id="c_util",label="Utility"},
   }},
   {name="Radar", col=3, items={
     {t="toggle",id="rad_on",label="Enable Radar"},
@@ -164,6 +171,7 @@ local SCHEMA = {
     {t="combo",id="silent_bone",label="Bone",items={"Head","Chest","Pelvis"},default=1},
     {t="slider",id="silent_fov",label="FOV",min=20,max=900,default=220,suf="px"},
     {t="toggle",id="silent_team",label="Team Check",default=true},
+    {t="toggle",id="silent_drone",label="Target Drones",default=false},
     {t="toggle",id="silent_vis",label="Show FOV + Target",default=true},
     {t="color",id="c_silent",label="Silent Color"},
   }},
@@ -192,7 +200,8 @@ local SCHEMA = {
 local DEF_COL={ c_fov={0.45,0.78,1,1}, c_enemy={0.95,0.35,0.4,1},
   c_name={1,1,1,1}, c_tracer={0.95,0.35,0.4,1}, c_bomb={1,0.8,0.2,1},
   c_claymore={1,0.35,0.35,1}, c_alarm={0.6,1,0.5,1}, c_xh={1,1,1,1}, c_accent={0.20,0.86,1.0,1},
-  c_silent={0.6,1.0,0.55,1} }
+  c_silent={0.6,1.0,0.55,1}, c_breach={1,0.45,0.3,1}, c_cam={0.5,0.85,1,1}, c_nade={1,0.85,0.25,1},
+  c_util={0.6,0.6,0.9,1} }
 
 for _,tab in ipairs(SCHEMA) do for _,g in ipairs(tab.groups) do for _,it in ipairs(g.items) do
   if it.t=="toggle" then cfg[it.id]=it.default or false
@@ -407,6 +416,7 @@ local BONE_LIST={"head","torso","arm1","arm2","leg1","leg2","shoulder1","shoulde
 local SKELETON={{"head","torso"},{"torso","shoulder1"},{"torso","shoulder2"},{"shoulder1","arm1"},{"shoulder2","arm2"},{"torso","hip1"},{"torso","hip2"},{"hip1","leg1"},{"hip2","leg2"}}
 local AIM_BONE={"head","torso","hip1","head"}
 local vm_players={}
+local drone_cache={}
 local vm_seen={}
 local char_models={}
 local char_last=-1
@@ -549,6 +559,14 @@ local function run_aimbot()
       local c=cand_for(p)
       if c and c.d<=cfg.aim_fov then local s=score(c); if s<bs then bs=s; best=c end end
     end
+    if cfg.aim_drone then
+      for _,d in ipairs(drone_cache) do
+        local sx,sy,v=W2S(d.x,d.y,d.z)
+        if v then local dd=math.sqrt((sx-cx)^2+(sy-cy)^2)
+          if dd<=cfg.aim_fov then local c={sx=sx,sy=sy,b=d,p={name="Drone"},d=dd}; local s=score(c); if s<bs then bs=s; best=c end end
+        end
+      end
+    end
   end
   if best then
     aim_lock=best.p.name
@@ -664,14 +682,43 @@ local PARTCLS={Part=true,MeshPart=true,UnionOperation=true,WedgePart=true}
 local obj_cache={}; local obj_last=-1
 local function find_part(inst,depth) for _,c in ipairs(call(function() return inst:GetChildren() end) or {}) do if PARTCLS[c.ClassName] then return c end end
   if depth>0 then for _,c in ipairs(call(function() return inst:GetChildren() end) or {}) do if c.ClassName=="Model" or c.ClassName=="Folder" then local r=find_part(c,depth-1); if r then return r end end end end return nil end
+local drone_parts={}; local drone_plast=-1
+local function scan_drones()
+  local t=now()
+  if t-drone_plast>0.3 then drone_plast=t
+    drone_parts={}; local ws=game.Workspace
+    for _,c in ipairs(call(function() return ws:GetChildren() end) or {}) do
+      if c.ClassName=="Model" and c.Name=="Drone" then local prt=find_part(c,3); if prt then drone_parts[#drone_parts+1]=prt end end
+    end
+  end
+  drone_cache={}
+  for _,prt in ipairs(drone_parts) do
+    if utility.IsValid(prt) then local p=prt.Position; if p then drone_cache[#drone_cache+1]={x=p.X,y=p.Y,z=p.Z} end end
+  end
+end
+local GADGETS={
+  Bomb={"BOMB","obj_bomb","c_bomb"}, Defuser={"DEFUSER","obj_bomb","c_bomb"},
+  Claymore={"CLAYMORE","obj_traps","c_claymore"}, ProximityAlarm={"PROX ALARM","obj_traps","c_claymore"},
+  NeedleMine={"NEEDLE MINE","obj_traps","c_claymore"}, ToxicCharge={"TOXIC","obj_traps","c_claymore"},
+  BarbedWire={"BARBED WIRE","obj_traps","c_claymore"}, ShockBattery={"SHOCK BAT","obj_traps","c_claymore"},
+  BreachCharge={"BREACH","obj_breach","c_breach"}, RemoteC4={"C4","obj_breach","c_breach"},
+  HardBreachCharge={"HARD BREACH","obj_breach","c_breach"}, ThermiteCharge={"THERMITE","obj_breach","c_breach"},
+  IncendiaryCanister={"INC CANISTER","obj_breach","c_breach"},
+  Drone={"DRONE","obj_cam","c_cam"}, StickyCamera={"STICKY CAM","obj_cam","c_cam"},
+  BulletproofCamera={"BP CAM","obj_cam","c_cam"}, DefaultCamera={"MAP CAM","obj_cam","c_cam"},
+  StunGrenade={"FLASH","obj_nade","c_nade"}, SmokeGrenade={"SMOKE","obj_nade","c_nade"},
+  EMPGrenade={"EMP","obj_nade","c_nade"}, ImpactGrenade={"IMPACT","obj_nade","c_nade"},
+  FragGrenade={"FRAG","obj_nade","c_nade"}, IncendiaryGrenade={"INCENDIARY","obj_nade","c_nade"},
+  DeployableShield={"SHIELD","obj_util","c_util"}, MetalBarricade={"BARRICADE","obj_util","c_util"},
+  SignalDisruptor={"JAMMER","obj_util","c_util"},
+}
 local function scan_obj()
   obj_cache={}; local ws=game.Workspace
   for _,m in ipairs(call(function() return ws:GetChildren() end) or {}) do
-    local nm=m.Name; local kind
-    if nm=="Bomb" and cfg.obj_bomb then kind={"BOMB","c_bomb"}
-    elseif nm=="Claymore" and cfg.obj_claymore then kind={"CLAYMORE","c_claymore"}
-    elseif nm=="ProximityAlarm" and cfg.obj_alarm then kind={"ALARM","c_alarm"} end
-    if kind and m.ClassName=="Model" then local prt=find_part(m,3); if prt then obj_cache[#obj_cache+1]={part=prt,label=kind[1],ck=kind[2]} end end
+    if m.ClassName=="Model" then
+      local g=GADGETS[m.Name]
+      if g and cfg[g[2]] then local prt=find_part(m,3); if prt then obj_cache[#obj_cache+1]={part=prt,label=g[1],ck=g[3]} end end
+    end
   end
 end
 local function run_obj_esp()
@@ -814,7 +861,6 @@ local R_clear   = rfn("ClearSilentTarget","clear_silent_target")
 local R_stop    = rfn("StopSilentTracking","stop_silent_tracking")
 local R_disable = rfn("DisableSilentHook","disable_silent_hook")
 
--- release the hook so normal shots pass through: stop tracking THEN clear the target
 local function silent_release()
   if R_stop then pcall(R_stop) end
   if R_clear then pcall(R_clear) end
@@ -862,6 +908,14 @@ local function run_silent()
         if d<bd then
           bd=d; best=p; bestv=Vector3.New(b.x,b.y,b.z); bsx=sx; bsy=sy
         end
+      end
+    end
+  end
+  if cfg.silent_drone then
+    for _,d in ipairs(drone_cache) do
+      local sx,sy,v=W2S(d.x,d.y,d.z)
+      if v then local dd=math.sqrt((sx-cx)^2+(sy-cy)^2)
+        if dd<bd then bd=dd; best=true; bestv=Vector3.New(d.x,d.y,d.z); bsx=sx; bsy=sy end
       end
     end
   end
@@ -924,6 +978,7 @@ function OnFrame()
   theme.accent=col.c_accent or theme.accent
   update_input()
   pcall(scan_vm)
+  pcall(scan_drones)
   pcall(run_aimbot)
   pcall(run_trigger)
   pcall(run_recoil)

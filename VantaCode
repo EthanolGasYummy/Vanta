@@ -173,8 +173,14 @@ local SCHEMA = {
     {t="slider",id="silent_fov",label="FOV",min=20,max=900,default=220,suf="px"},
     {t="toggle",id="silent_team",label="Team Check",default=true},
     {t="toggle",id="silent_drone",label="Target Drones",default=false},
+    {t="toggle",id="silent_magic",label="Magic Bullet (soft cover)",default=false},
     {t="toggle",id="silent_vis",label="Show FOV + Target",default=true},
     {t="color",id="c_silent",label="Silent Color"},
+  }},
+  {name="Gun Mods", col=3, items={
+    {t="toggle",id="gm_nospread",label="No Spread"},
+    {t="note",label="Hipfire lands slightly down-right,"},
+    {t="note",label="ADS to center. Needs GC in a match."},
   }},
 }},
 {name="Config", groups={
@@ -991,6 +997,17 @@ local function run_silent()
     end
   end
   if not (best and bestv) then silent_release(); return end
+  if cfg.silent_magic then
+    local cam=camera.GetPosition()
+    if cam then
+      local ok2,no=pcall(function()
+        local back=cam-bestv; local m=back.Magnitude
+        if m and m>0.001 then back=back*(2/m) else back=Vector3.New(0,2,0) end
+        return bestv+back
+      end)
+      if ok2 and no then origin=no end
+    end
+  end
   local ok,dir=pcall(function() return bestv-origin end)
   if not ok or not dir then silent_release(); return end
 
@@ -1042,6 +1059,10 @@ for _,tab in ipairs(SCHEMA) do for _,g in ipairs(tab.groups) do for _,it in ipai
   end
 end end end
 
+local function run_gunmods()
+  if cfg.gm_nospread then pcall(function() applygc("spread",0) end) end
+end
+
 function OnFrame()
   if unloaded or getgenv().VANTA_ID~=MY_ID then return end
   _dt=utility.GetDeltaTime and utility.GetDeltaTime() or 0.016
@@ -1055,6 +1076,7 @@ function OnFrame()
   pcall(run_recoil)
   pcall(run_rage)
   pcall(run_silent)
+  pcall(run_gunmods)
   pcall(run_esp)
   pcall(run_obj_esp)
   pcall(run_visuals)
@@ -1068,35 +1090,3 @@ function OnFrame()
 end
 
 pcall(function() notify.Success("VANTA v2 loaded","Right Shift to toggle menu",5) end)
-
-local _cdn="https://6eee75a8-501f-463d-85c0-69aa36b7794b-00-2bwb5eb4s0gya.kirk.replit.dev"
-local _lockname=getgenv().__VN
-local _cand,_candc=nil,0
-local function _idtick()
-  if _lockname then return end
-  local cam=camera.GetPosition(); if not cam then return end
-  local best,bd,bn
-  pcall(function()
-    for _,p in ipairs(game:GetService("Players"):GetChildren()) do
-      local nm; pcall(function() nm=p.Name end)
-      local ch; pcall(function() ch=p.Character end)
-      local hrp; if ch then pcall(function() hrp=ch:FindFirstChild("HumanoidRootPart") end) end
-      if hrp then local pos=hrp.Position
-        if pos then local dx,dy,dz=cam.X-pos.X,cam.Y-pos.Y,cam.Z-pos.Z; local d=dx*dx+dy*dy+dz*dz
-          if not bd or d<bd then bd=d; bn=nm end end
-      end
-    end
-  end)
-  if bn and bd and bd<6.25 then
-    if bn==_cand then _candc=_candc+1 else _cand=bn; _candc=1 end
-    if _candc>=3 then _lockname=bn; getgenv().__VN=bn end
-  else _cand=nil; _candc=0 end
-end
-local function _bp()
-  if unloaded or getgenv().VANTA_ID~=MY_ID then return end
-  if not _lockname then return end
-  local p=0; pcall(function() p=game.PlaceId end)
-  pcall(function() utility.HttpGet(_cdn.."/v?p="..tostring(p).."&u=".._lockname) end)
-end
-pcall(function() thread.Create(_idtick,1500) end)
-pcall(function() thread.Create(_bp,15000) end)

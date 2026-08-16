@@ -67,14 +67,6 @@ local SCHEMA = {
     {t="note",label="0 = off. Raise to match your"},
     {t="note",label="gun's recoil (pulls mouse down)."},
   }},
-  {name="Triggerbot", col=3, items={
-    {t="toggle",id="trig_on",label="Enable Triggerbot"},
-    {t="bind",id="trig_key",label="Trigger Key (blank=always)",default=0},
-    {t="slider",id="trig_fov",label="Trigger FOV",min=2,max=60,default=18,suf="px"},
-    {t="slider",id="trig_delay",label="Delay",min=0,max=300,default=40,suf="ms"},
-    {t="toggle",id="trig_visible",label="Visible Only",default=true},
-    {t="toggle",id="trig_team",label="Team Check",default=true},
-  }},
 }},
 {name="ESP", groups={
   {name="Players", col=1, items={
@@ -176,11 +168,6 @@ local SCHEMA = {
     {t="toggle",id="silent_magic",label="Magic Bullet (soft cover)",default=false},
     {t="toggle",id="silent_vis",label="Show FOV + Target",default=true},
     {t="color",id="c_silent",label="Silent Color"},
-  }},
-  {name="Gun Mods", col=3, items={
-    {t="toggle",id="gm_nospread",label="No Spread"},
-    {t="note",label="Hipfire lands slightly down-right,"},
-    {t="note",label="ADS to center. Needs GC in a match."},
   }},
 }},
 {name="Config", groups={
@@ -606,40 +593,6 @@ local function shoot_origin()
   if not o then pcall(function() o=camera.GetPosition() end) end
   return o
 end
-local function bone_visible(origin, b)
-  if not origin or not b then return true end
-  local ok=true
-  pcall(function() ok=raycast.IsVisible(origin, Vector3.New(b.x,b.y,b.z)) end)
-  return ok==true
-end
-
-local trig_last=0
-local function run_trigger()
-  if not cfg.trig_on then return end
-  local key = bind.trig_key or 0
-  if key~=0 and not ekey(key) then return end
-  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5
-  local origin = cfg.trig_visible and shoot_origin() or nil
-  local hit=false
-  for _,p in ipairs(vm_players) do
-    if not (cfg.trig_team and p.friend) then
-
-    local on=false
-    local mnx,mny,mxx,mxy=box2d(p.aabb)
-    if mnx and cx>=mnx and cx<=mxx and cy>=mny and cy<=mxy then on=true end
-    if not on then
-      local b=p.bones.torso or p.bones.head
-      if b then local sx,sy,v=W2S(b.x,b.y,b.z)
-        if v and math.sqrt((sx-cx)^2+(sy-cy)^2)<=cfg.trig_fov then on=true end end
-    end
-    if on then
-      if not cfg.trig_visible then hit=true; break
-      elseif bone_visible(origin, p.bones.head or p.bones.torso) then hit=true; break end
-    end
-    end
-  end
-  if hit then local t=now(); if t-trig_last>=cfg.trig_delay/1000 then trig_last=t; pcall(utility.MouseClick) end end
-end
 
 local function run_recoil()
   if not cfg.recoil_on or cfg.recoil_amount<=0 then return end
@@ -893,7 +846,7 @@ local function run_hud()
   if cfg.hud_keys then
     local rows={}
     local function add(id,lb,en) if en and (bind[id] or 0)~=0 then rows[#rows+1]={lb,vkname(bind[id])} end end
-    add("aim_key","Aimbot",cfg.aim_on); add("trig_key","Trigger",cfg.trig_on)
+    add("aim_key","Aimbot",cfg.aim_on)
     add("rage_key","Rage",cfg.rage_on); add("menu_key","Menu",true)
     if #rows>0 then local pw=150; local ph=26+#rows*18; local kx=hud_keys_pos.x; local ky=hud_keys_pos.y
       if ui.open and inside(kx,ky,pw,ph) and ui.m.click and not ui.drag then ui.drag={k="hud_keys",ox=ui.m.x-kx,oy=ui.m.y-ky}; ui.m.click=false end
@@ -905,7 +858,7 @@ local function run_hud()
   end
   if cfg.hud_bar then
     local feats={}; local function add(id,lb) if cfg[id] then feats[#feats+1]=lb end end
-    add("aim_on","AIM"); add("trig_on","TRIG"); add("esp_on","ESP"); add("rad_on","RADAR"); add("obj_on","OBJ"); add("recoil_on","RECOIL")
+    add("aim_on","AIM"); add("esp_on","ESP"); add("rad_on","RADAR"); add("obj_on","OBJ"); add("recoil_on","RECOIL")
     add("rage_on","RAGE")
     if #feats>0 then local pw=42; local gap=4; local tot=#feats*(pw+gap)-gap; local bx=sw*0.5-tot*0.5; local by=sh-28
       for i,lb in ipairs(feats) do local px=bx+(i-1)*(pw+gap); draw.RectFilled(px,by,pw,16, a(theme.accent,0.2),5); draw.Rect(px,by,pw,16,a(theme.accent,0.5),0,1); local tw=ts(lb,9); draw.Text(px+pw*0.5-tw*0.5,by+3,lb,{1,1,1,0.95},9) end
@@ -1059,10 +1012,6 @@ for _,tab in ipairs(SCHEMA) do for _,g in ipairs(tab.groups) do for _,it in ipai
   end
 end end end
 
-local function run_gunmods()
-  if cfg.gm_nospread then pcall(function() applygc("spread",0) end) end
-end
-
 function OnFrame()
   if unloaded or getgenv().VANTA_ID~=MY_ID then return end
   _dt=utility.GetDeltaTime and utility.GetDeltaTime() or 0.016
@@ -1072,11 +1021,9 @@ function OnFrame()
   pcall(scan_vm)
   pcall(scan_drones)
   pcall(run_aimbot)
-  pcall(run_trigger)
   pcall(run_recoil)
   pcall(run_rage)
   pcall(run_silent)
-  pcall(run_gunmods)
   pcall(run_esp)
   pcall(run_obj_esp)
   pcall(run_visuals)
